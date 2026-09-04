@@ -7,6 +7,67 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
     exit;
 }
 
+// ----------------- 处理删除操作 (电表和操作员) -----------------
+// 1. 删除电表
+if (isset($_GET['delete_meter'])) {
+    $m_id = (int)$_GET['delete_meter'];
+    $stmt = $pdo->prepare("DELETE FROM meters WHERE id = ?");
+    $stmt->execute([$m_id]);
+    header("Location: admin.php");
+    exit;
+}
+
+// 2. 删除操作员账号 (禁止管理员删除自己以防止死锁)
+if (isset($_GET['delete_user'])) {
+    $u_id = (int)$_GET['delete_user'];
+    if ($u_id !== (int)$_SESSION['user_id']) {
+        $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
+        $stmt->execute([$u_id]);
+    }
+    header("Location: admin.php");
+    exit;
+}
+
+// ----------------- 处理编辑/修改操作 (电表和操作员) -----------------
+// 1. 保存编辑后的电表信息
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_meter_submit'])) {
+    $m_id = (int)$_POST['edit_m_id'];
+    $m_name = trim($_POST['edit_m_name']);
+    $b_name = trim($_POST['edit_b_name']);
+    $limit_val = (double)$_POST['edit_limit_val'];
+    
+    $stmt = $pdo->prepare("UPDATE meters SET meter_name = ?, building_name = ?, usage_limit = ? WHERE id = ?");
+    $stmt->execute([$m_name, $b_name, $limit_val, $m_id]);
+    header("Location: admin.php");
+    exit;
+}
+
+// 2. 保存编辑后的操作员账户信息
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_user_submit'])) {
+    $u_id = (int)$_POST['edit_u_id'];
+    $uname = trim($_POST['edit_uname']);
+    $urole = $_POST['edit_urole'];
+    
+    if (!empty($_POST['edit_upass'])) {
+        // 如果输入了新密码，则哈希更新
+        $upass = password_hash($_POST['edit_upass'], PASSWORD_DEFAULT);
+        $stmt = $pdo->prepare("UPDATE users SET username = ?, password_hash = ?, role = ? WHERE id = ?");
+        $stmt->execute([$uname, $upass, $urole, $u_id]);
+    } else {
+        // 未输入密码则保留原密码
+        $stmt = $pdo->prepare("UPDATE users SET username = ?, role = ? WHERE id = ?");
+        $stmt->execute([$uname, $urole, $u_id]);
+    }
+    
+    // 如果修改的是当前登录管理员自己，同步更新 SESSION 信息
+    if ($u_id === (int)$_SESSION['user_id']) {
+        $_SESSION['username'] = $uname;
+        $_SESSION['role'] = $urole;
+    }
+    header("Location: admin.php");
+    exit;
+}
+
 // 处理语言和主题切换的POST请求
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'set_lang') {
@@ -31,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
     exit;
 }
 
-// 添加电表
+// 添加新电表
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_meter'])) {
     $m_name = trim($_POST['m_name']);
     $b_name = trim($_POST['b_name']);
@@ -55,17 +116,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user_op'])) {
     exit;
 }
 
-// 获取历史抄表记录，联合查询用户和电表数据
-$readings = $pdo->query("
+// ----------------- 服务端分页器 -----------------
+$records_per_page = 10;
+$current_page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
+$offset = ($current_page - 1) * $records_per_page;
+
+$count_stmt = $pdo->query("SELECT COUNT(*) FROM readings");
+$total_records = (int)$count_stmt->fetchColumn();
+$total_pages = max(1, ceil($total_records / $records_per_page));
+
+if ($current_page > $total_pages) {
+    $current_page = $total_pages;
+    $offset = ($current_page - 1) * $records_per_page;
+}
+
+$stmt = $pdo->prepare("
     SELECT r.*, m.meter_name, m.building_name, m.usage_limit, u.username 
     FROM readings r
     JOIN meters m ON r.meter_id = m.id
     JOIN users u ON r.user_id = u.id
     ORDER BY r.submitted_at DESC
-")->fetchAll();
+    LIMIT ? OFFSET ?
+");
+$stmt->bindValue(1, $records_per_page, PDO::PARAM_INT);
+$stmt->bindValue(2, $offset, PDO::PARAM_INT);
+$stmt->execute();
+$readings = $stmt->fetchAll();
 
-// 获取当前所有的电表
+// 获取可用电表
 $meters = $pdo->query("SELECT * FROM meters ORDER BY meter_name ASC")->fetchAll();
+
+// 获取系统用户
+$users = $pdo->query("SELECT id, username, role FROM users ORDER BY username ASC")->fetchAll();
 ?>
 <!DOCTYPE html>
 <html lang="<?php echo $lang; ?>" class="<?php echo ($theme === 'dark') ? 'dark' : ''; ?>">
@@ -166,7 +248,6 @@ $meters = $pdo->query("SELECT * FROM meters ORDER BY meter_name ASC")->fetchAll(
                                     </tr>
                                 <?php endif; ?>
                                 <?php foreach($readings as $r): 
-                                    // 查找昨日对应记录来算出本日用量
                                     $prev_stmt = $pdo->prepare("SELECT reading_value FROM readings WHERE meter_id = ? AND submitted_date < ? ORDER BY submitted_date DESC LIMIT 1");
                                     $prev_stmt->execute([$r['meter_id'], $r['submitted_date']]);
                                     $prev_row = $prev_stmt->fetch();
@@ -214,64 +295,183 @@ $meters = $pdo->query("SELECT * FROM meters ORDER BY meter_name ASC")->fetchAll(
                             </tbody>
                         </table>
                     </div>
+
+                    <!-- 物理分页器 UI -->
+                    <?php if ($total_pages > 1): ?>
+                        <div class="flex items-center justify-between border-t border-gray-100 dark:border-gray-700 mt-6 pt-4 text-xs">
+                            <span class="text-gray-500 dark:text-gray-400">
+                                <?php echo str_replace(['{current}', '{total}'], [$current_page, $total_pages], __('page_info')); ?>
+                            </span>
+                            <div class="inline-flex gap-1">
+                                <a href="?page=1" class="px-2.5 py-1.5 rounded border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 font-semibold <?php echo ($current_page <= 1) ? 'pointer-events-none opacity-50' : ''; ?>">
+                                    « First
+                                </a>
+                                <a href="?page=<?php echo $current_page - 1; ?>" class="px-2.5 py-1.5 rounded border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 font-semibold <?php echo ($current_page <= 1) ? 'pointer-events-none opacity-50' : ''; ?>">
+                                    ‹ <?php echo __('prev_page'); ?>
+                                </a>
+                                <a href="?page=<?php echo $current_page + 1; ?>" class="px-2.5 py-1.5 rounded border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 font-semibold <?php echo ($current_page >= $total_pages) ? 'pointer-events-none opacity-50' : ''; ?>">
+                                    <?php echo __('next_page'); ?> ›
+                                </a>
+                                <a href="?page=<?php echo $total_pages; ?>" class="px-2.5 py-1.5 rounded border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 font-semibold <?php echo ($current_page >= $total_pages) ? 'pointer-events-none opacity-50' : ''; ?>">
+                                    Last »
+                                </a>
+                            </div>
+                        </div>
+                    <?php endif; ?>
                 </div>
 
                 <!-- 数据管理区域：电表管理及用户账号管理 -->
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="grid grid-cols-1 gap-6">
                     
-                    <!-- 添加电表 -->
+                    <!-- 电表管理分栏 (已支持增删改) -->
                     <div class="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-100 dark:border-gray-700 p-6">
-                        <h3 class="text-sm font-bold mb-4 flex items-center gap-1.5">
+                        <h3 class="text-sm font-bold mb-4 flex items-center gap-1.5 border-b border-gray-100 dark:border-gray-700 pb-2">
                             <i data-lucide="plus-circle" class="text-green-500"></i>
-                            <?php echo __('add_meter'); ?>
+                            <?php echo __('add_meter'); ?> / <?php echo __('meters_title'); ?>
                         </h3>
-                        <form method="POST" class="space-y-3 text-xs">
-                            <input type="hidden" name="add_meter" value="1">
-                            <div>
-                                <label class="block font-semibold mb-1"><?php echo __('meter_code_label'); ?></label>
-                                <input type="text" name="m_name" placeholder="e.g. TNB-M-01" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <!-- 添加电表表单 -->
+                            <form method="POST" class="space-y-3 text-xs md:col-span-1">
+                                <input type="hidden" name="add_meter" value="1">
+                                <div>
+                                    <label class="block font-semibold mb-1"><?php echo __('meter_code_label'); ?></label>
+                                    <input type="text" name="m_name" placeholder="e.g. TNB-M-01" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block font-semibold mb-1"><?php echo __('building_location_label'); ?></label>
+                                    <input type="text" name="b_name" placeholder="e.g. Level 3 Hub" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block font-semibold mb-1"><?php echo __('daily_limit_label'); ?></label>
+                                    <input type="number" step="0.1" name="limit_val" value="80.0" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none font-bold">
+                                </div>
+                                <button type="submit" class="w-full bg-purple-600 text-white p-2 rounded font-bold hover:bg-purple-700 transition">
+                                    <?php echo __('create_meter_btn'); ?>
+                                </button>
+                            </form>
+
+                            <!-- 电表管理列表及删除/修改操作 -->
+                            <div class="md:col-span-2 overflow-x-auto text-xs border border-gray-100 dark:border-gray-700 rounded-lg p-3 bg-gray-50/50 dark:bg-gray-800/50">
+                                <h4 class="font-bold mb-3 text-purple-600"><?php echo __('meters_title'); ?></h4>
+                                <table class="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr class="border-b border-gray-200 dark:border-gray-700 text-gray-500 font-bold uppercase text-[10px]">
+                                            <th class="py-2 px-1"><?php echo __('meter_name'); ?></th>
+                                            <th class="py-2 px-1"><?php echo __('building'); ?></th>
+                                            <th class="py-2 px-1"><?php echo __('limit'); ?></th>
+                                            <th class="py-2 px-1 text-right"><?php echo __('status'); ?></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if(empty($meters)): ?>
+                                            <tr>
+                                                <td colspan="4" class="py-3 text-center text-gray-400"><?php echo __('no_meters'); ?></td>
+                                            </tr>
+                                        <?php endif; ?>
+                                        <?php foreach($meters as $m): ?>
+                                            <tr class="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-100/30 transition">
+                                                <td class="py-2 px-1 font-semibold"><?php echo htmlspecialchars($m['meter_name']); ?></td>
+                                                <td class="py-2 px-1 text-gray-500"><?php echo htmlspecialchars($m['building_name']); ?></td>
+                                                <td class="py-2 px-1 font-bold"><?php echo $m['usage_limit']; ?> kWh</td>
+                                                <td class="py-2 px-1 text-right space-x-1">
+                                                    <!-- 修改电表按钮 -->
+                                                    <button type="button" 
+                                                            onclick="openEditMeterModal(<?php echo $m['id']; ?>, '<?php echo htmlspecialchars($m['meter_name'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($m['building_name'], ENT_QUOTES); ?>', <?php echo $m['usage_limit']; ?>)" 
+                                                            class="bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300 p-1 rounded inline-block hover:opacity-80 transition" 
+                                                            title="<?php echo __('edit_btn'); ?>">
+                                                        <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                                                    </button>
+                                                    <!-- 安全删除电表 -->
+                                                    <a href="admin.php?delete_meter=<?php echo $m['id']; ?>" onclick="return confirm('<?php echo __('confirm_delete'); ?>');" class="bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300 p-1 rounded inline-block hover:opacity-80 transition" title="Delete">
+                                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
                             </div>
-                            <div>
-                                <label class="block font-semibold mb-1"><?php echo __('building_location_label'); ?></label>
-                                <input type="text" name="b_name" placeholder="e.g. Level 3 Hub" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none">
-                            </div>
-                            <div>
-                                <label class="block font-semibold mb-1"><?php echo __('daily_limit_label'); ?></label>
-                                <input type="number" step="0.1" name="limit_val" value="80.0" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none font-bold">
-                            </div>
-                            <button type="submit" class="w-full bg-purple-600 text-white p-2 rounded font-bold hover:bg-purple-700 transition">
-                                <?php echo __('create_meter_btn'); ?>
-                            </button>
-                        </form>
+                        </div>
                     </div>
 
-                    <!-- 添加操作员 -->
+                    <!-- 用户操作员管理分栏 (已支持增删改与多语言Logged In绑定) -->
                     <div class="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-100 dark:border-gray-700 p-6">
-                        <h3 class="text-sm font-bold mb-4 flex items-center gap-1.5">
+                        <h3 class="text-sm font-bold mb-4 flex items-center gap-1.5 border-b border-gray-100 dark:border-gray-700 pb-2">
                             <i data-lucide="user-plus" class="text-blue-500"></i>
-                            <?php echo __('add_user'); ?>
+                            <?php echo __('add_user'); ?> / <?php echo __('users_title'); ?>
                         </h3>
-                        <form method="POST" class="space-y-3 text-xs">
-                            <input type="hidden" name="add_user_op" value="1">
-                            <div>
-                                <label class="block font-semibold mb-1"><?php echo __('username'); ?></label>
-                                <input type="text" name="uname" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <!-- 注册操作员表单 -->
+                            <form method="POST" class="space-y-3 text-xs md:col-span-1">
+                                <input type="hidden" name="add_user_op" value="1">
+                                <div>
+                                    <label class="block font-semibold mb-1"><?php echo __('username'); ?></label>
+                                    <input type="text" name="uname" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block font-semibold mb-1"><?php echo __('password'); ?></label>
+                                    <input type="password" name="upass" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block font-semibold mb-1"><?php echo __('role'); ?></label>
+                                    <select name="urole" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none">
+                                        <option value="user"><?php echo __('user'); ?></option>
+                                        <option value="admin"><?php echo __('admin'); ?></option>
+                                    </select>
+                                </div>
+                                <button type="submit" class="w-full bg-purple-600 text-white p-2 rounded font-bold hover:bg-purple-700 transition">
+                                    <?php echo __('reg_user_btn'); ?>
+                                </button>
+                            </form>
+
+                            <!-- 用户列表及删除/修改操作 -->
+                            <div class="md:col-span-2 overflow-x-auto text-xs border border-gray-100 dark:border-gray-700 rounded-lg p-3 bg-gray-50/50 dark:bg-gray-800/50">
+                                <h4 class="font-bold mb-3 text-purple-600"><?php echo __('users_title'); ?></h4>
+                                <table class="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr class="border-b border-gray-200 dark:border-gray-700 text-gray-500 font-bold uppercase text-[10px]">
+                                            <th class="py-2 px-1"><?php echo __('username'); ?></th>
+                                            <th class="py-2 px-1"><?php echo __('role'); ?></th>
+                                            <th class="py-2 px-1 text-right"><?php echo __('status'); ?></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if(empty($users)): ?>
+                                            <tr>
+                                                <td colspan="3" class="py-3 text-center text-gray-400"><?php echo __('no_users'); ?></td>
+                                            </tr>
+                                        <?php endif; ?>
+                                        <?php foreach($users as $u): ?>
+                                            <tr class="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-100/30 transition">
+                                                <td class="py-2 px-1 font-semibold"><?php echo htmlspecialchars($u['username']); ?></td>
+                                                <td class="py-2 px-1">
+                                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold <?php echo ($u['role'] === 'admin') ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300' : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'; ?>">
+                                                        <?php echo ($u['role'] === 'admin') ? __('admin') : __('user'); ?>
+                                                    </span>
+                                                </td>
+                                                <td class="py-2 px-1 text-right space-x-1">
+                                                    <!-- 修改操作员按钮 -->
+                                                    <button type="button" 
+                                                            onclick="openEditUserModal(<?php echo $u['id']; ?>, '<?php echo htmlspecialchars($u['username'], ENT_QUOTES); ?>', '<?php echo $u['role']; ?>')" 
+                                                            class="bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300 p-1 rounded inline-block hover:opacity-80 transition" 
+                                                            title="<?php echo __('edit_btn'); ?>">
+                                                        <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                                                    </button>
+                                                    <!-- 安全删除非我本人账户 (已替换Logged In的硬编码) -->
+                                                    <?php if ((int)$u['id'] !== (int)$_SESSION['user_id']): ?>
+                                                        <a href="admin.php?delete_user=<?php echo $u['id']; ?>" onclick="return confirm('<?php echo __('confirm_delete'); ?>');" class="bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300 p-1 rounded inline-block hover:opacity-80 transition" title="Delete">
+                                                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                                        </a>
+                                                    <?php else: ?>
+                                                        <span class="text-gray-400 text-[10px] italic"><?php echo __('logged_in_status'); ?></span>
+                                                    <?php endif; ?>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
                             </div>
-                            <div>
-                                <label class="block font-semibold mb-1"><?php echo __('password'); ?></label>
-                                <input type="password" name="upass" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none">
-                            </div>
-                            <div>
-                                <label class="block font-semibold mb-1"><?php echo __('role'); ?></label>
-                                <select name="urole" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-purple-500 outline-none">
-                                    <option value="user"><?php echo __('user'); ?></option>
-                                    <option value="admin"><?php echo __('admin'); ?></option>
-                                </select>
-                            </div>
-                            <button type="submit" class="w-full bg-purple-600 text-white p-2 rounded font-bold hover:bg-purple-700 transition">
-                                <?php echo __('reg_user_btn'); ?>
-                            </button>
-                        </form>
+                        </div>
                     </div>
 
                 </div>
@@ -288,7 +488,6 @@ $meters = $pdo->query("SELECT * FROM meters ORDER BY meter_name ASC")->fetchAll(
                     <form method="POST" class="space-y-4 text-xs">
                         <input type="hidden" name="save_settings" value="1">
                         
-                        <!-- 选择通道 -->
                         <div>
                             <label class="block font-semibold mb-1.5"><?php echo __('provider'); ?></label>
                             <select name="config[notification_provider]" id="notifProvider" onchange="toggleConfigFields()" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-blue-500 outline-none font-semibold">
@@ -297,13 +496,11 @@ $meters = $pdo->query("SELECT * FROM meters ORDER BY meter_name ASC")->fetchAll(
                             </select>
                         </div>
 
-                        <!-- 漏抄提醒截止时间 -->
                         <div>
                             <label class="block font-semibold mb-1.5"><?php echo __('missing_deadline_label'); ?></label>
                             <input type="time" name="config[submission_deadline]" value="<?php echo htmlspecialchars($system_configs['submission_deadline'] ?? '18:00'); ?>" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-blue-500 outline-none">
                         </div>
 
-                        <!-- Telegram 专属参数组 -->
                         <div id="tgFields" class="space-y-3">
                             <div class="border-t border-gray-100 dark:border-gray-700 pt-3">
                                 <label class="block font-semibold mb-1 text-blue-500"><?php echo __('tg_token_label'); ?></label>
@@ -315,7 +512,6 @@ $meters = $pdo->query("SELECT * FROM meters ORDER BY meter_name ASC")->fetchAll(
                             </div>
                         </div>
 
-                        <!-- WhatsApp 专属参数组 -->
                         <div id="waFields" class="space-y-3 hidden">
                             <div class="border-t border-gray-100 dark:border-gray-700 pt-3">
                                 <label class="block font-semibold mb-1 text-green-600"><?php echo __('wa_api_url_label'); ?></label>
@@ -342,6 +538,83 @@ $meters = $pdo->query("SELECT * FROM meters ORDER BY meter_name ASC")->fetchAll(
         </div>
 
     </main>
+
+    <!-- ----------------- 电表修改模态框组件 ----------------- -->
+    <div id="edit-meter-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-lg max-w-sm w-full shadow-2xl p-6 relative border border-gray-100 dark:border-gray-700">
+            <button type="button" onclick="closeEditMeterModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+            <h3 class="text-base font-bold mb-4 flex items-center gap-2">
+                <i data-lucide="edit" class="text-blue-500"></i>
+                <?php echo __('edit_meter_title'); ?>
+            </h3>
+            <form method="POST" class="space-y-3 text-xs">
+                <input type="hidden" name="edit_meter_submit" value="1">
+                <input type="hidden" name="edit_m_id" id="edit_m_id">
+                <div>
+                    <label class="block font-semibold mb-1"><?php echo __('meter_code_label'); ?></label>
+                    <input type="text" name="edit_m_name" id="edit_m_name" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-blue-500 outline-none font-semibold">
+                </div>
+                <div>
+                    <label class="block font-semibold mb-1"><?php echo __('building_location_label'); ?></label>
+                    <input type="text" name="edit_b_name" id="edit_b_name" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block font-semibold mb-1"><?php echo __('daily_limit_label'); ?></label>
+                    <input type="number" step="0.1" name="edit_limit_val" id="edit_limit_val" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-blue-500 outline-none font-bold">
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="button" onclick="closeEditMeterModal()" class="w-1/2 bg-gray-200 dark:bg-gray-700 dark:text-gray-200 text-gray-700 p-2 rounded font-semibold hover:opacity-80 transition">
+                        <?php echo __('btn_cancel'); ?>
+                    </button>
+                    <button type="submit" class="w-1/2 bg-blue-600 text-white p-2 rounded font-bold hover:bg-blue-700 transition">
+                        <?php echo __('btn_save_changes'); ?>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ----------------- 用户修改模态框组件 ----------------- -->
+    <div id="edit-user-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-lg max-w-sm w-full shadow-2xl p-6 relative border border-gray-100 dark:border-gray-700">
+            <button type="button" onclick="closeEditUserModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+            <h3 class="text-base font-bold mb-4 flex items-center gap-2">
+                <i data-lucide="user-cog" class="text-blue-500"></i>
+                <?php echo __('edit_user_title'); ?>
+            </h3>
+            <form method="POST" class="space-y-3 text-xs">
+                <input type="hidden" name="edit_user_submit" value="1">
+                <input type="hidden" name="edit_u_id" id="edit_u_id">
+                <div>
+                    <label class="block font-semibold mb-1"><?php echo __('username'); ?></label>
+                    <input type="text" name="edit_uname" id="edit_uname" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-blue-500 outline-none font-semibold">
+                </div>
+                <div>
+                    <label class="block font-semibold mb-1"><?php echo __('password'); ?> (<?php echo __('btn_submit'); ?>)</label>
+                    <input type="password" name="edit_upass" placeholder="<?php echo __('pw_placeholder_edit'); ?>" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block font-semibold mb-1"><?php echo __('role'); ?></label>
+                    <select name="edit_urole" id="edit_urole" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-1 focus:ring-blue-500 outline-none font-semibold">
+                        <option value="user"><?php echo __('user'); ?></option>
+                        <option value="admin"><?php echo __('admin'); ?></option>
+                    </select>
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="button" onclick="closeEditUserModal()" class="w-1/2 bg-gray-200 dark:bg-gray-700 dark:text-gray-200 text-gray-700 p-2 rounded font-semibold hover:opacity-80 transition">
+                        <?php echo __('btn_cancel'); ?>
+                    </button>
+                    <button type="submit" class="w-1/2 bg-blue-600 text-white p-2 rounded font-bold hover:bg-blue-700 transition">
+                        <?php echo __('btn_save_changes'); ?>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <!-- 管理员指南弹窗 -->
     <div id="admin-guide" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden">
@@ -384,8 +657,34 @@ $meters = $pdo->query("SELECT * FROM meters ORDER BY meter_name ASC")->fetchAll(
                 wa.classList.remove('hidden');
             }
         }
+
+        // ----------------- 控制电表修改模态框 -----------------
+        function openEditMeterModal(id, name, building, limit) {
+            document.getElementById('edit_m_id').value = id;
+            document.getElementById('edit_m_name').value = name;
+            document.getElementById('edit_b_name').value = building;
+            document.getElementById('edit_limit_val').value = limit;
+            
+            document.getElementById('edit-meter-modal').classList.remove('hidden');
+        }
+
+        function closeEditMeterModal() {
+            document.getElementById('edit-meter-modal').classList.add('hidden');
+        }
+
+        // ----------------- 控制用户修改模态框 -----------------
+        function openEditUserModal(id, username, role) {
+            document.getElementById('edit_u_id').value = id;
+            document.getElementById('edit_uname').value = username;
+            document.getElementById('edit_urole').value = role;
+            
+            document.getElementById('edit-user-modal').classList.remove('hidden');
+        }
+
+        function closeEditUserModal() {
+            document.getElementById('edit-user-modal').classList.add('hidden');
+        }
         
-        // 首次加载初始化视图
         window.onload = function() {
             toggleConfigFields();
         };

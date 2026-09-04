@@ -94,7 +94,24 @@ $dictionary = [
         'tg_chat_id_label' => 'Telegram Chat ID (Admin)',
         'provider' => 'Notification Provider',
         'view_link' => 'View',
-        'err_unauthorized' => 'Unauthorized access.'
+        'err_unauthorized' => 'Unauthorized access.',
+        'delete_btn' => 'Delete',
+        'prev_page' => 'Previous',
+        'next_page' => 'Next',
+        'confirm_delete' => 'Are you sure you want to delete this item? This action cannot be undone.',
+        'meters_title' => 'Registered Meters List',
+        'users_title' => 'System Users List',
+        'no_meters' => 'No registered meters found.',
+        'no_users' => 'No system users found.',
+        'page_info' => 'Page {current} of {total}',
+        // 解决硬编码与新增修改功能翻译
+        'logged_in_status' => 'Logged In',
+        'edit_btn' => 'Edit',
+        'edit_meter_title' => 'Modify Meter Details',
+        'edit_user_title' => 'Modify System User Details',
+        'pw_placeholder_edit' => 'Leave blank to keep current password',
+        'btn_save_changes' => 'Save Changes',
+        'btn_cancel' => 'Cancel'
     ],
     'zh' => [
         'app_title' => 'TNB 智能电表监控系统',
@@ -157,7 +174,24 @@ $dictionary = [
         'tg_chat_id_label' => 'Telegram 接收人 Chat ID',
         'provider' => '选择自动推送通道',
         'view_link' => '查看原图',
-        'err_unauthorized' => '未经授权的访问。'
+        'err_unauthorized' => '未经授权的访问。',
+        'delete_btn' => '删除',
+        'prev_page' => '上一页',
+        'next_page' => '下一页',
+        'confirm_delete' => '您确定要删除此条目吗？该操作将无法恢复。',
+        'meters_title' => '已登记电表列表',
+        'users_title' => '系统账号列表',
+        'no_meters' => '暂无已登记的电表。',
+        'no_users' => '暂无登记的系统用户。',
+        'page_info' => '第 {current} 页 / 共 {total} 页',
+        // 解决硬编码与新增修改功能翻译
+        'logged_in_status' => '当前登录中',
+        'edit_btn' => '编辑',
+        'edit_meter_title' => '编辑电表参数信息',
+        'edit_user_title' => '修改操作员账号信息',
+        'pw_placeholder_edit' => '若不修改密码，请将此输入框留空',
+        'btn_save_changes' => '保存修改内容',
+        'btn_cancel' => '取消'
     ],
     'ms' => [
         'app_title' => 'Sistem Pemantauan Meter Elektrik TNB',
@@ -220,7 +254,24 @@ $dictionary = [
         'tg_chat_id_label' => 'Chat ID Telegram (Admin)',
         'provider' => 'Gateway Penghantaran Notifikasi',
         'view_link' => 'Papar Gambar',
-        'err_unauthorized' => 'Akses tidak sah.'
+        'err_unauthorized' => 'Akses tidak sah.',
+        'delete_btn' => 'Padam',
+        'prev_page' => 'Terdahulu',
+        'next_page' => 'Seterusnya',
+        'confirm_delete' => 'Adakah anda pasti mahu memadam item ini? Tindakan ini tidak boleh diubah.',
+        'meters_title' => 'Senarai Meter Berdaftar',
+        'users_title' => 'Senarai Pengguna Sistem',
+        'no_meters' => 'Tiada meter berdaftar dijumpai.',
+        'no_users' => 'Tiada pengguna berdaftar dijumpai.',
+        'page_info' => 'Halaman {current} daripada {total}',
+        // 解决硬编码与新增修改功能翻译
+        'logged_in_status' => 'Log Masuk Semasa',
+        'edit_btn' => 'Ubah',
+        'edit_meter_title' => 'Ubah Suai Parameter Meter',
+        'edit_user_title' => 'Ubah Suai Akaun Pengguna',
+        'pw_placeholder_edit' => 'Biarkan kosong jika tidak mahu menukar kata laluan',
+        'btn_save_changes' => 'Simpan Perubahan',
+        'btn_cancel' => 'Batal'
     ]
 ];
 
@@ -229,7 +280,7 @@ function __($key) {
     return isset($dictionary[$lang][$key]) ? $dictionary[$lang][$key] : $key;
 }
 
-// ----------------- 输出动态JS多语言字典，彻底消除前端JS硬编码 -----------------
+// ----------------- 输出动态JS多语言字典 -----------------
 function get_js_translations_json() {
     global $dictionary, $lang;
     return json_encode($dictionary[$lang]);
@@ -268,7 +319,6 @@ function send_alert_notification($message) {
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($post_data));
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
         $res = curl_exec($ch);
-        // PHP 8.5 起正式弃用 curl_close()。cURL 连接将在 CurlHandle 生命周期结束时自动关闭。
         return $res;
         
     } elseif ($provider === 'telegram') {
@@ -292,7 +342,6 @@ function send_alert_notification($message) {
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($post_data));
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
         $res = curl_exec($ch);
-        // PHP 8.5 起正式弃用 curl_close()。cURL 连接将在 CurlHandle 生命周期结束时自动关闭。
         return $res;
     }
     return false;

@@ -11,7 +11,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         header("Location: index.php");
         exit;
     }
-    if ($_POST['action'] === 'set_theme') {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'set_theme') {
         setcookie('app_theme', $_POST['theme_val'], time() + (3600 * 24 * 30), "/");
         header("Location: index.php");
         exit;
@@ -214,9 +214,15 @@ if (isset($_SESSION['user_id'])) {
                         <label class="block text-xs font-semibold uppercase tracking-wider mb-1"><?php echo __('username'); ?></label>
                         <input type="text" name="username" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
+                    <!-- 增加了密码显示/隐藏功能的密码框 -->
                     <div class="mb-6">
                         <label class="block text-xs font-semibold uppercase tracking-wider mb-1"><?php echo __('password'); ?></label>
-                        <input type="password" name="password" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                        <div class="relative">
+                            <input type="password" name="password" id="loginPassword" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none">
+                            <button type="button" onclick="togglePasswordVisibility()" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                                <i data-lucide="eye" id="passwordEyeIcon" class="w-5 h-5"></i>
+                            </button>
+                        </div>
                     </div>
                     <button type="submit" class="w-full bg-blue-600 text-white p-3 rounded font-bold hover:bg-blue-700 transition flex items-center justify-center gap-2">
                         <i data-lucide="check" class="w-5 h-5"></i>
@@ -258,7 +264,7 @@ if (isset($_SESSION['user_id'])) {
                     <div class="mb-5">
                         <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5"><?php echo __('photo'); ?></label>
                         <div class="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-4 bg-gray-50 dark:bg-gray-700/50">
-                            <!-- capture为environment强制直接调用摄像头 [1] -->
+                            <!-- capture为environment强制直接调用后置摄像头 [1] -->
                             <input type="file" name="photo" id="cameraInput" accept="image/*" capture="environment" class="hidden" required>
                             
                             <button type="button" onclick="triggerCamera()" class="bg-blue-600 text-white px-4 py-2 rounded-md font-semibold text-sm hover:bg-blue-700 transition flex items-center gap-2 mb-2">
@@ -308,7 +314,6 @@ if (isset($_SESSION['user_id'])) {
 
     <!-- 运行 Lucide 图标集及彻底翻译JS中的字符串 -->
     <script>
-        // 动态读取来自 PHP 的全翻译词典
         const i18n = <?php echo get_js_translations_json(); ?>;
 
         lucide.createIcons();
@@ -316,6 +321,20 @@ if (isset($_SESSION['user_id'])) {
         function toggleModal(id) {
             const modal = document.getElementById(id);
             modal.classList.toggle('hidden');
+        }
+
+        // 密码可见性切换
+        function togglePasswordVisibility() {
+            const pwdInput = document.getElementById('loginPassword');
+            const eyeIcon = document.getElementById('passwordEyeIcon');
+            if (pwdInput.type === 'password') {
+                pwdInput.type = 'text';
+                eyeIcon.setAttribute('data-lucide', 'eye-off');
+            } else {
+                pwdInput.type = 'password';
+                eyeIcon.setAttribute('data-lucide', 'eye');
+            }
+            lucide.createIcons();
         }
 
         function triggerCamera() {
