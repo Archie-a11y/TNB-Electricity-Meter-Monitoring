@@ -1,0 +1,23 @@
+# 忽略用户上传的现场电表照片（防止泄露隐私并占用大量 Git 空间）
+uploads/*
+# 但保留 uploads 文件夹结构
+!uploads/.gitkeep
+
+# 忽略临时文件与操作系统生成的文件
+.DS_Store
+Thumbs.db
+
+# 忽略本地开发环境工具的配置文件夹
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# 忽略本地测试导出的临时 SQL 备份文件
+*.sql.gz
+*.bak
+# 但保留项目本身的初始数据库建表脚本
+!db.sql
