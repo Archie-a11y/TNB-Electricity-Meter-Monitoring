@@ -1,9 +1,30 @@
 <?php
-// 强效定义马来西亚时区
-date_default_timezone_set('Asia/Kuala_Lumpur');
-
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
+}
+
+// ----------------- 【核心升级】集中处理语言和主题切换，防止逻辑冲突与死锁 -----------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    if ($_POST['action'] === 'set_lang') {
+        setcookie('app_lang', $_POST['lang_val'], time() + (3600 * 24 * 30), "/");
+        $_COOKIE['app_lang'] = $_POST['lang_val']; // 立即同步更新内存变量
+        $redirect_url = $_SERVER['PHP_SELF'];
+        if (!empty($_SERVER['QUERY_STRING'])) {
+            $redirect_url .= '?' . $_SERVER['QUERY_STRING'];
+        }
+        header("Location: " . $redirect_url);
+        exit;
+    }
+    if ($_POST['action'] === 'set_theme') {
+        setcookie('app_theme', $_POST['theme_val'], time() + (3600 * 24 * 30), "/");
+        $_COOKIE['app_theme'] = $_POST['theme_val'];
+        $redirect_url = $_SERVER['PHP_SELF'];
+        if (!empty($_SERVER['QUERY_STRING'])) {
+            $redirect_url .= '?' . $_SERVER['QUERY_STRING'];
+        }
+        header("Location: " . $redirect_url);
+        exit;
+    }
 }
 
 // 数据库连接配置
@@ -104,14 +125,32 @@ $dictionary = [
         'no_meters' => 'No registered meters found.',
         'no_users' => 'No system users found.',
         'page_info' => 'Page {current} of {total}',
-        // 解决硬编码与新增修改功能翻译
         'logged_in_status' => 'Logged In',
         'edit_btn' => 'Edit',
         'edit_meter_title' => 'Modify Meter Details',
         'edit_user_title' => 'Modify System User Details',
         'pw_placeholder_edit' => 'Leave blank to keep current password',
         'btn_save_changes' => 'Save Changes',
-        'btn_cancel' => 'Cancel'
+        'btn_cancel' => 'Cancel',
+        'combobox_placeholder' => 'Type to search building / meter...',
+        'no_assigned_meters' => 'No meters have been assigned to your account by the admin.',
+        'filter_title' => 'Filters',
+        'filter_all_meters' => 'All Meters',
+        'filter_all_status' => 'All Status',
+        'filter_only_exceeded' => 'Only Exceeded',
+        'filter_only_normal' => 'Only Normal',
+        'btn_filter' => 'Filter',
+        'btn_reset' => 'Reset',
+        'pairing_management' => 'Operator-Meter Pairing',
+        'select_operator' => 'Select Operator',
+        'select_meter_pair' => 'Select Meter',
+        'btn_pair' => 'Establish Pairing',
+        'active_pairings' => 'Active Pairing Relations',
+        'no_pairings' => 'No pairing mappings exist currently.',
+        // 新增表格过滤及折叠操作翻译
+        'table_quick_search_placeholder' => 'Quick search table rows...',
+        'search_operator_placeholder' => 'Type to search operators...',
+        'search_meter_placeholder' => 'Type to search meters...'
     ],
     'zh' => [
         'app_title' => 'TNB 智能电表监控系统',
@@ -184,14 +223,32 @@ $dictionary = [
         'no_meters' => '暂无已登记的电表。',
         'no_users' => '暂无登记的系统用户。',
         'page_info' => '第 {current} 页 / 共 {total} 页',
-        // 解决硬编码与新增修改功能翻译
         'logged_in_status' => '当前登录中',
         'edit_btn' => '编辑',
         'edit_meter_title' => '编辑电表参数信息',
         'edit_user_title' => '修改操作员账号信息',
         'pw_placeholder_edit' => '若不修改密码，请将此输入框留空',
         'btn_save_changes' => '保存修改内容',
-        'btn_cancel' => '取消'
+        'btn_cancel' => '取消',
+        'combobox_placeholder' => '输入电表编号或位置进行搜索...',
+        'no_assigned_meters' => '系统未为您分配任何负责填报的电表，请联系管理员。',
+        'filter_title' => '多维筛选看板',
+        'filter_all_meters' => '所有电表',
+        'filter_all_status' => '所有状态',
+        'filter_only_exceeded' => '仅看超标记录',
+        'filter_only_normal' => '仅看正常记录',
+        'btn_filter' => '立即筛选',
+        'btn_reset' => '重置条件',
+        'pairing_management' => '操作员与电表填报配对管理',
+        'select_operator' => '选择操作员',
+        'select_meter_pair' => '选择分配电表',
+        'btn_pair' => '建立配对绑定关系',
+        'active_pairings' => '当前已配对映射关系表',
+        'no_pairings' => '当前系统暂无任何配对关系。',
+        // 新增表格过滤及折叠操作翻译
+        'table_quick_search_placeholder' => '在此输入关键字对下表进行实时模糊搜索过滤...',
+        'search_operator_placeholder' => '搜索或选择操作员账号...',
+        'search_meter_placeholder' => '搜索或选择对应电表...'
     ],
     'ms' => [
         'app_title' => 'Sistem Pemantauan Meter Elektrik TNB',
@@ -264,14 +321,32 @@ $dictionary = [
         'no_meters' => 'Tiada meter berdaftar dijumpai.',
         'no_users' => 'Tiada pengguna berdaftar dijumpai.',
         'page_info' => 'Halaman {current} daripada {total}',
-        // 解决硬编码与新增修改功能翻译
         'logged_in_status' => 'Log Masuk Semasa',
         'edit_btn' => 'Ubah',
         'edit_meter_title' => 'Ubah Suai Parameter Meter',
         'edit_user_title' => 'Ubah Suai Akaun Pengguna',
         'pw_placeholder_edit' => 'Biarkan kosong jika tidak mahu menukar kata laluan',
         'btn_save_changes' => 'Simpan Perubahan',
-        'btn_cancel' => 'Batal'
+        'btn_cancel' => 'Batal',
+        'combobox_placeholder' => 'Taip untuk mencari meter atau lokasi...',
+        'no_assigned_meters' => 'Tiada meter ditugaskan kepada akaun anda oleh pentadbir.',
+        'filter_title' => 'Penapis Dashboard',
+        'filter_all_meters' => 'Semua Meter',
+        'filter_all_status' => 'Semua Status',
+        'filter_only_exceeded' => 'Had Melebihi Sahaja',
+        'filter_only_normal' => 'Had Normal Sahaja',
+        'btn_filter' => 'Tapis',
+        'btn_reset' => 'Set Semula',
+        'pairing_management' => 'Padanan Operator & Meter',
+        'select_operator' => 'Pilih Operator',
+        'select_meter_pair' => 'Pilih Meter',
+        'btn_pair' => 'Gandingkan',
+        'active_pairings' => 'Senarai Gandingan Aktif',
+        'no_pairings' => 'Tiada gandingan aktif wujud pada masa ini.',
+        // 新增表格过滤及折叠操作翻译
+        'table_quick_search_placeholder' => 'Taip untuk tapis rekod jadual...',
+        'search_operator_placeholder' => 'Cari atau pilih nama operator...',
+        'search_meter_placeholder' => 'Cari atau pilih kod meter...'
     ]
 ];
 

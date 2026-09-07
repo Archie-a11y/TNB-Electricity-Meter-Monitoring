@@ -4,20 +4,6 @@ require_once 'db.php';
 $error_msg = '';
 $success_msg = '';
 
-// 处理语言和主题切换的POST请求
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
-    if ($_POST['action'] === 'set_lang') {
-        setcookie('app_lang', $_POST['lang_val'], time() + (3600 * 24 * 30), "/");
-        header("Location: index.php");
-        exit;
-    }
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'set_theme') {
-        setcookie('app_theme', $_POST['theme_val'], time() + (3600 * 24 * 30), "/");
-        header("Location: index.php");
-        exit;
-    }
-}
-
 // 处理登录
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_form'])) {
     $username = trim($_POST['username'] ?? '');
@@ -99,7 +85,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_reading'])) {
                             [$meter_data['meter_name'], $diff_val], 
                             __('err_limit_exceeded')
                         );
-                        // 触发推送网关
                         send_alert_notification($alert_msg);
                     }
                 }
@@ -114,10 +99,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_reading'])) {
     }
 }
 
-// 获取可用电表列表
+// ----------------- 获取可用电表列表（支持配对隔离功能） -----------------
 $meters_list = [];
 if (isset($_SESSION['user_id'])) {
-    $meters_list = $pdo->query("SELECT * FROM meters ORDER BY meter_name ASC")->fetchAll();
+    if ($_SESSION['role'] === 'admin') {
+        $meters_list = $pdo->query("SELECT * FROM meters ORDER BY meter_name ASC")->fetchAll();
+    } else {
+        $p_stmt = $pdo->prepare("
+            SELECT m.* 
+            FROM meters m
+            JOIN user_meters um ON m.id = um.meter_id
+            WHERE um.user_id = ?
+            ORDER BY m.meter_name ASC
+        ");
+        $p_stmt->execute([$_SESSION['user_id']]);
+        $meters_list = $p_stmt->fetchAll();
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -126,19 +123,16 @@ if (isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo __('app_title'); ?></title>
-    <!-- 使用 Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
         }
     </script>
-    <!-- 使用 Lucide 免费图标库 -->
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body class="bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200">
 
-    <!-- 顶部状态栏 -->
     <header class="bg-white dark:bg-gray-800 shadow p-4 sticky top-0 z-40">
         <div class="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-4">
             <h1 class="font-bold text-lg tracking-tight flex items-center gap-2">
@@ -147,7 +141,6 @@ if (isset($_SESSION['user_id'])) {
             </h1>
             
             <div class="flex items-center gap-3">
-                <!-- 切换语言 -->
                 <form method="POST" class="inline-block">
                     <input type="hidden" name="action" value="set_lang">
                     <select name="lang_val" onchange="this.form.submit()" class="bg-gray-100 dark:bg-gray-700 text-xs rounded border p-1 focus:outline-none">
@@ -157,7 +150,6 @@ if (isset($_SESSION['user_id'])) {
                     </select>
                 </form>
 
-                <!-- 切换主题 -->
                 <form method="POST" class="inline-block">
                     <input type="hidden" name="action" value="set_theme">
                     <button type="submit" name="theme_val" value="<?php echo ($theme==='light')?'dark':'light'; ?>" class="p-1 rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition">
@@ -169,7 +161,6 @@ if (isset($_SESSION['user_id'])) {
                     </button>
                 </form>
 
-                <!-- 用户指南 -->
                 <button onclick="toggleModal('guide-modal')" class="p-1 rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200 hover:opacity-80 transition flex items-center gap-1 text-xs px-2 font-semibold">
                     <i data-lucide="help-circle" class="w-4 h-4"></i>
                     <?php echo __('user_guide'); ?>
@@ -187,7 +178,6 @@ if (isset($_SESSION['user_id'])) {
 
     <main class="max-w-md mx-auto p-4 mt-6">
 
-        <!-- 消息弹窗反馈 -->
         <?php if(!empty($error_msg)): ?>
             <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-3 mb-4 rounded text-sm flex items-center gap-2">
                 <i data-lucide="alert-triangle" class="w-5 h-5 shrink-0"></i>
@@ -201,7 +191,6 @@ if (isset($_SESSION['user_id'])) {
             </div>
         <?php endif; ?>
 
-        <!-- 场景1：未登录，显示登录框 -->
         <?php if(!isset($_SESSION['user_id'])): ?>
             <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 border border-gray-100 dark:border-gray-700">
                 <h2 class="text-xl font-bold mb-4 text-center tracking-tight flex items-center justify-center gap-2">
@@ -214,7 +203,6 @@ if (isset($_SESSION['user_id'])) {
                         <label class="block text-xs font-semibold uppercase tracking-wider mb-1"><?php echo __('username'); ?></label>
                         <input type="text" name="username" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
-                    <!-- 增加了密码显示/隐藏功能的密码框 -->
                     <div class="mb-6">
                         <label class="block text-xs font-semibold uppercase tracking-wider mb-1"><?php echo __('password'); ?></label>
                         <div class="relative">
@@ -231,13 +219,12 @@ if (isset($_SESSION['user_id'])) {
                 </form>
             </div>
 
-        <!-- 场景2：操作员登录，显示抄表表单 -->
         <?php else: ?>
             <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 border border-gray-100 dark:border-gray-700">
                 <div class="flex justify-between items-center mb-6">
                     <div class="text-sm font-semibold">
                         Hi, <span class="text-blue-500 font-bold"><?php echo htmlspecialchars($_SESSION['username']); ?></span>
-                        <span class="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded ml-1"><?php echo __('user'); ?></span>
+                        <span class="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded ml-1"><?php echo ($_SESSION['role'] === 'admin') ? __('admin') : __('user'); ?></span>
                     </div>
                     <?php if($_SESSION['role'] === 'admin'): ?>
                         <a href="admin.php" class="text-xs bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700 transition font-bold flex items-center gap-1">
@@ -247,53 +234,69 @@ if (isset($_SESSION['user_id'])) {
                     <?php endif; ?>
                 </div>
 
-                <form method="POST" enctype="multipart/form-data" id="readingForm">
-                    <input type="hidden" name="submit_reading" value="1">
-                    
-                    <!-- 选择电表 -->
-                    <div class="mb-5">
-                        <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5"><?php echo __('select_meter'); ?></label>
-                        <select name="meter_id" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2.5 focus:ring-2 focus:ring-blue-500 outline-none">
-                            <?php foreach($meters_list as $m): ?>
-                                <option value="<?php echo $m['id']; ?>"><?php echo htmlspecialchars($m['building_name'] . ' (' . $m['meter_name'] . ')'); ?></option>
-                            <?php endforeach; ?>
-                        </select>
+                <?php if(empty($meters_list)): ?>
+                    <div class="bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 text-yellow-700 dark:text-yellow-300 p-4 rounded text-xs text-center font-semibold">
+                        <i data-lucide="alert-triangle" class="w-8 h-8 mx-auto mb-2 text-yellow-500"></i>
+                        <?php echo __('no_assigned_meters'); ?>
                     </div>
-
-                    <!-- 实时拍照区 -->
-                    <div class="mb-5">
-                        <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5"><?php echo __('photo'); ?></label>
-                        <div class="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-4 bg-gray-50 dark:bg-gray-700/50">
-                            <!-- capture为environment强制直接调用后置摄像头 [1] -->
-                            <input type="file" name="photo" id="cameraInput" accept="image/*" capture="environment" class="hidden" required>
+                <?php else: ?>
+                    <form method="POST" enctype="multipart/form-data" id="readingForm">
+                        <input type="hidden" name="submit_reading" value="1">
+                        
+                        <!-- 手写模糊搜索电表组件 (Custom Searchable Combobox) -->
+                        <div class="mb-5 relative">
+                            <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5"><?php echo __('select_meter'); ?></label>
                             
-                            <button type="button" onclick="triggerCamera()" class="bg-blue-600 text-white px-4 py-2 rounded-md font-semibold text-sm hover:bg-blue-700 transition flex items-center gap-2 mb-2">
-                                <i data-lucide="camera" class="w-4 h-4"></i>
-                                <?php echo __('capture_live'); ?>
-                            </button>
-                            
-                            <p class="text-xs text-gray-500 dark:text-gray-400 text-center mb-2" id="fileNamePlaceholder"><?php echo __('no_photo_placeholder'); ?></p>
-                            <img id="photoPreview" class="hidden max-h-48 w-full object-cover rounded shadow" alt="Preview">
+                            <div class="relative" id="combobox-wrapper">
+                                <div class="flex items-center">
+                                    <input type="text" 
+                                           id="combobox-search" 
+                                           placeholder="<?php echo __('combobox_placeholder'); ?>" 
+                                           class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none font-semibold text-sm">
+                                    <span class="absolute right-3 text-gray-400">
+                                        <i data-lucide="chevron-down" class="w-5 h-5"></i>
+                                    </span>
+                                </div>
+                                <input type="hidden" name="meter_id" id="combobox-value" required>
+                                <div id="combobox-dropdown" class="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl hidden z-50">
+                                    <!-- JS 渲染选项 -->
+                                </div>
+                            </div>
                         </div>
-                    </div>
 
-                    <!-- 读数输入 -->
-                    <div class="mb-6">
-                        <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5"><?php echo __('reading_val'); ?></label>
-                        <input type="number" step="0.01" name="reading_val" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-lg font-bold">
-                    </div>
+                        <!-- 实时拍照区 -->
+                        <div class="mb-5">
+                            <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5"><?php echo __('photo'); ?></label>
+                            <div class="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-4 bg-gray-50 dark:bg-gray-700/50">
+                                <input type="file" name="photo" id="cameraInput" accept="image/*" capture="environment" class="hidden" required>
+                                
+                                <button type="button" onclick="triggerCamera()" class="bg-blue-600 text-white px-4 py-2 rounded-md font-semibold text-sm hover:bg-blue-700 transition flex items-center gap-2 mb-2">
+                                    <i data-lucide="camera" class="w-4 h-4"></i>
+                                    <?php echo __('capture_live'); ?>
+                                </button>
+                                
+                                <p class="text-xs text-gray-500 dark:text-gray-400 text-center mb-2" id="fileNamePlaceholder"><?php echo __('no_photo_placeholder'); ?></p>
+                                <img id="photoPreview" class="hidden max-h-48 w-full object-cover rounded shadow" alt="Preview">
+                            </div>
+                        </div>
 
-                    <button type="submit" id="submitBtn" disabled class="w-full bg-gray-400 text-gray-200 p-3 rounded-lg font-bold flex items-center justify-center gap-2 cursor-not-allowed transition">
-                        <i data-lucide="send" class="w-5 h-5"></i>
-                        <?php echo __('btn_submit'); ?>
-                    </button>
-                </form>
+                        <!-- 读数输入 -->
+                        <div class="mb-6">
+                            <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5"><?php echo __('reading_val'); ?></label>
+                            <input type="number" step="0.01" name="reading_val" required class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-lg font-bold">
+                        </div>
+
+                        <button type="submit" id="submitBtn" disabled class="w-full bg-gray-400 text-gray-200 p-3 rounded-lg font-bold flex items-center justify-center gap-2 cursor-not-allowed transition">
+                            <i data-lucide="send" class="w-5 h-5"></i>
+                            <?php echo __('btn_submit'); ?>
+                        </button>
+                    </form>
+                <?php endif; ?>
             </div>
         <?php endif; ?>
 
     </main>
 
-    <!-- 用户指南弹窗 -->
     <div id="guide-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden">
         <div class="bg-white dark:bg-gray-800 rounded-lg max-w-md w-full shadow-2xl p-6 relative border border-gray-100 dark:border-gray-700">
             <button onclick="toggleModal('guide-modal')" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
@@ -312,9 +315,9 @@ if (isset($_SESSION['user_id'])) {
         </div>
     </div>
 
-    <!-- 运行 Lucide 图标集及彻底翻译JS中的字符串 -->
     <script>
         const i18n = <?php echo get_js_translations_json(); ?>;
+        const authorizedMeters = <?php echo json_encode($meters_list); ?>;
 
         lucide.createIcons();
 
@@ -323,7 +326,6 @@ if (isset($_SESSION['user_id'])) {
             modal.classList.toggle('hidden');
         }
 
-        // 密码可见性切换
         function togglePasswordVisibility() {
             const pwdInput = document.getElementById('loginPassword');
             const eyeIcon = document.getElementById('passwordEyeIcon');
@@ -341,7 +343,6 @@ if (isset($_SESSION['user_id'])) {
             document.getElementById('cameraInput').click();
         }
 
-        // 文件捕获状态监听，控制提交按钮
         document.getElementById('cameraInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
             const placeholder = document.getElementById('fileNamePlaceholder');
@@ -350,8 +351,6 @@ if (isset($_SESSION['user_id'])) {
 
             if (file) {
                 placeholder.innerText = file.name + ' (' + (file.size / 1024 / 1024).toFixed(2) + ' MB)';
-                
-                // 加载预览图
                 const reader = new FileReader();
                 reader.onload = function(event) {
                     preview.src = event.target.result;
@@ -359,7 +358,6 @@ if (isset($_SESSION['user_id'])) {
                 }
                 reader.readAsDataURL(file);
 
-                // 只有当有图片上传时才允许提交表单
                 submitBtn.disabled = false;
                 submitBtn.classList.remove('bg-gray-400', 'text-gray-200', 'cursor-not-allowed');
                 submitBtn.classList.add('bg-blue-600', 'text-white', 'hover:bg-blue-700');
@@ -371,6 +369,69 @@ if (isset($_SESSION['user_id'])) {
                 submitBtn.classList.remove('bg-blue-600', 'text-white', 'hover:bg-blue-700');
             }
         });
+
+        // 模糊搜索输入组件交互
+        if (authorizedMeters.length > 0) {
+            const searchInput = document.getElementById('combobox-search');
+            const hiddenValue = document.getElementById('combobox-value');
+            const dropdown = document.getElementById('combobox-dropdown');
+
+            function renderDropdown(items) {
+                dropdown.innerHTML = '';
+                if (items.length === 0) {
+                    const emptyItem = document.createElement('div');
+                    emptyItem.className = 'p-3 text-xs text-gray-400 italic text-center';
+                    emptyItem.innerText = 'No matching meters found.';
+                    dropdown.appendChild(emptyItem);
+                } else {
+                    items.forEach(item => {
+                        const option = document.createElement('div');
+                        option.className = 'p-2.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer font-semibold transition flex flex-col';
+                        option.innerHTML = `
+                            <span>${item.building_name}</span>
+                            <span class="text-[10px] text-gray-400 font-normal">${item.meter_name}</span>
+                        `;
+                        option.addEventListener('mousedown', () => {
+                            selectItem(item);
+                        });
+                        dropdown.appendChild(option);
+                    });
+                }
+            }
+
+            function selectItem(item) {
+                searchInput.value = `${item.building_name} (${item.meter_name})`;
+                hiddenValue.value = item.id;
+                dropdown.classList.add('hidden');
+            }
+
+            searchInput.addEventListener('input', (e) => {
+                const query = e.target.value.toLowerCase().trim();
+                hiddenValue.value = '';
+                const filtered = authorizedMeters.filter(item => {
+                    return item.meter_name.toLowerCase().includes(query) || 
+                           item.building_name.toLowerCase().includes(query);
+                });
+                renderDropdown(filtered);
+                dropdown.classList.remove('hidden');
+            });
+
+            searchInput.addEventListener('focus', () => {
+                if (searchInput.value === '') {
+                    renderDropdown(authorizedMeters);
+                }
+                dropdown.classList.remove('hidden');
+            });
+
+            searchInput.addEventListener('blur', () => {
+                setTimeout(() => {
+                    dropdown.classList.add('hidden');
+                    if (hiddenValue.value === '') {
+                        searchInput.value = '';
+                    }
+                }, 200);
+            });
+        }
     </script>
 </body>
 </html>
