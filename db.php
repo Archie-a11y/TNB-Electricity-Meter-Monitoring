@@ -1,13 +1,42 @@
 <?php
+// 强效定义马来西亚时区
+date_default_timezone_set('Asia/Kuala_Lumpur');
+
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// ----------------- 【核心升级】集中处理语言和主题切换，防止逻辑冲突与死锁 -----------------
+// ----------------- 【安全升级】无操作定时自动退出登录功能 -----------------
+if (isset($_SESSION['user_id'])) {
+    $timeout_seconds = 1800; // 设定无操作自动登出时长：30分钟（1800秒）
+    
+    if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity']) > $timeout_seconds) {
+        // 超出设定时长未进行任何活动，强制清空并销毁 Session
+        session_unset();
+        session_destroy();
+        
+        // 清理客户端关联的 Session Cookie 保持安全合规
+        if (ini_get("session.use_cookies")) {
+            $params = session_get_cookie_params();
+            setcookie(session_name(), '', time() - 42000,
+                $params["path"], $params["domain"],
+                $params["secure"], $params["httponly"]
+            );
+        }
+        
+        // 自动安全踢回登录门户
+        header("Location: index.php");
+        exit;
+    }
+    // 用户正在操作，实时刷新最后一次活动时间戳
+    $_SESSION['last_activity'] = time();
+}
+
+// ----------------- 集中处理语言和主题切换，防止逻辑冲突 -----------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'set_lang') {
         setcookie('app_lang', $_POST['lang_val'], time() + (3600 * 24 * 30), "/");
-        $_COOKIE['app_lang'] = $_POST['lang_val']; // 立即同步更新内存变量
+        $_COOKIE['app_lang'] = $_POST['lang_val']; 
         $redirect_url = $_SERVER['PHP_SELF'];
         if (!empty($_SERVER['QUERY_STRING'])) {
             $redirect_url .= '?' . $_SERVER['QUERY_STRING'];
@@ -147,7 +176,6 @@ $dictionary = [
         'btn_pair' => 'Establish Pairing',
         'active_pairings' => 'Active Pairing Relations',
         'no_pairings' => 'No pairing mappings exist currently.',
-        // 新增表格过滤及折叠操作翻译
         'table_quick_search_placeholder' => 'Quick search table rows...',
         'search_operator_placeholder' => 'Type to search operators...',
         'search_meter_placeholder' => 'Type to search meters...'
@@ -245,7 +273,6 @@ $dictionary = [
         'btn_pair' => '建立配对绑定关系',
         'active_pairings' => '当前已配对映射关系表',
         'no_pairings' => '当前系统暂无任何配对关系。',
-        // 新增表格过滤及折叠操作翻译
         'table_quick_search_placeholder' => '在此输入关键字对下表进行实时模糊搜索过滤...',
         'search_operator_placeholder' => '搜索或选择操作员账号...',
         'search_meter_placeholder' => '搜索或选择对应电表...'
@@ -343,7 +370,6 @@ $dictionary = [
         'btn_pair' => 'Gandingkan',
         'active_pairings' => 'Senarai Gandingan Aktif',
         'no_pairings' => 'Tiada gandingan aktif wujud pada masa ini.',
-        // 新增表格过滤及折叠操作翻译
         'table_quick_search_placeholder' => 'Taip untuk tapis rekod jadual...',
         'search_operator_placeholder' => 'Cari atau pilih nama operator...',
         'search_meter_placeholder' => 'Cari atau pilih kod meter...'
